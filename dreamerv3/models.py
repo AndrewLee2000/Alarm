@@ -105,19 +105,21 @@ class WorldModel(nn.Module):
             cont=config.cont_head["loss_scale"],
         )
 
-    def _train(self, data):
+    def _train(self, data, wake, active, active_length): 
         # action (batch_size, batch_length, act_dim)
         # image (batch_size, batch_length, h, w, ch)
         # reward (batch_size, batch_length)
         # discount (batch_size, batch_length)
-        data = self.preprocess(data)
+        data = self.preprocess(data) 
 
-        with tools.RequiresGrad(self):
+        with tools.RequiresGrad(self, wake, active):
             with torch.cuda.amp.autocast(self._use_amp):
                 embed = self.encoder(data)
-                post, prior = self.dynamics.observe(
+                post, prior = self.dynamics.observe( # pseudo code-line 9
                     embed, data["action"], data["is_first"]
                 )
+                if active_length == 0 : #TODO 1: DT와 Dreamer의 state 비교하여  active 변수 처리 방법론  논의 필요 #pseudo code-line 10
+                    active = False # pseudo code-line 11
                 kl_free = self._config.kl_free
                 dyn_scale = self._config.dyn_scale
                 rep_scale = self._config.rep_scale
@@ -145,7 +147,7 @@ class WorldModel(nn.Module):
                     for key, value in losses.items()
                 }
                 model_loss = sum(scaled.values()) + kl_loss
-            metrics = self._model_opt(torch.mean(model_loss), self.parameters())
+            metrics = self._model_opt(torch.mean(model_loss), self.parameters()) # pseudo code-line 12
 
         metrics.update({f"{name}_loss": to_np(loss) for name, loss in losses.items()})
         metrics["kl_free"] = kl_free
@@ -168,7 +170,7 @@ class WorldModel(nn.Module):
                 postent=self.dynamics.get_dist(post).entropy(),
             )
         post = {k: v.detach() for k, v in post.items()}
-        return post, context, metrics
+        return post, context, metrics, active
 
     # this function is called during both rollout and training
     def preprocess(self, obs):

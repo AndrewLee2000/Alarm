@@ -26,7 +26,7 @@ to_np = lambda x: x.detach().cpu().numpy()
 
 
 class Dreamer(nn.Module):
-    def __init__(self, obs_space, act_space, config, logger, dataset):
+    def __init__(self, obs_space, act_space, config, logger, dataset, wake, active):
         super(Dreamer, self).__init__()
         self._config = config
         self._logger = logger
@@ -57,7 +57,9 @@ class Dreamer(nn.Module):
             random=lambda: expl.Random(config, act_space),
             plan2explore=lambda: expl.Plan2Explore(config, self._wm, reward),
         )[config.expl_behavior]().to(self._config.device)
-
+        self._wake = wake
+        self._active = active
+        
     def __call__(self, obs, reset, state=None, training=True):
         step = self._step
         if training:
@@ -66,10 +68,19 @@ class Dreamer(nn.Module):
                 if self._should_pretrain()
                 else self._should_train(step)
             )
-            for _ in range(steps):
-                self._train(next(self._dataset))
-                self._update_count += 1
-                self._metrics["update_count"] = self._update_count
+            if self._wake == True : # pseudo code-line 6
+                active_length = 15 #TODO 1: 지금은 임시로 만든 코드임
+                for i in range(steps): # pseudo code-line 7
+                    active_length -= i #TODO 1: 지금은 임시로 만든 코드임
+                    self._train(next(self._dataset), active_length) # pseudo code-line 8 (by next(self._dataset)), go into
+                    self._update_count += 1
+                    self._metrics["update_count"] = self._update_count
+            else : # pseudo code-line ?: 기존 dreamer와 동일한 방법론
+                for i in range(steps): 
+                    self._train(next(self._dataset)) 
+                    self._update_count += 1
+                    self._metrics["update_count"] = self._update_count
+                           
             if self._should_log(step):
                 for name, values in self._metrics.items():
                     self._logger.scalar(name, float(np.mean(values)))
@@ -117,9 +128,9 @@ class Dreamer(nn.Module):
         state = (latent, action)
         return policy_output, state
 
-    def _train(self, data):
+    def _train(self, data, active_length): 
         metrics = {}
-        post, context, mets = self._wm._train(data)
+        post, context, mets, self._active = self._wm._train(data, self._wake, self._active, active_length) # pseudo code-go into
         metrics.update(mets)
         start = post
         reward = lambda f, s, a: self._wm.heads["reward"](
@@ -250,8 +261,8 @@ def main(config):
     print("Action Space", acts)
     config.num_actions = acts.n if hasattr(acts, "n") else acts.shape[0]
 
-    '''Initialize dataset \D with \S random seed episodes. - at pseudo code'''
     state = None
+    # pseudo code-line 1
     if not config.offline_traindir:
         prefill = max(0, config.prefill - count_steps(config.traindir))
         print(f"Prefill dataset ({prefill} steps).")
@@ -290,13 +301,14 @@ def main(config):
     # dataset \D is used to train the agent.
     train_dataset = make_dataset(train_eps, config)
     eval_dataset = make_dataset(eval_eps, config)
-    '''Initialize neural network parameters \theta,\phi,\psi randomly. - at pseudo code'''
-    agent = Dreamer(
+    agent = Dreamer( # pseudo code-line 2
         train_envs[0].observation_space,
         train_envs[0].action_space,
         config,
         logger,
         train_dataset,
+        wake=True,#pseudo code-line 3
+        active=True,#pseudo code-line 4
     ).to(config.device)
     agent.requires_grad_(requires_grad=False)
     if (logdir / "latest.pt").exists():
@@ -306,9 +318,7 @@ def main(config):
         agent._should_pretrain._once = False
 
     # make sure eval will be executed once after config.steps
-    '''while not converged do - at pseudo code'''
-    wake = True 
-    while agent._step < config.steps + config.eval_every: # config.steps : 학습 스텝 수, # config.eval_every : 평가 스텝 수
+    while agent._step < config.steps + config.eval_every: # pseudo code-line 5 (config.steps : 학습 스텝 수, config.eval_every : 평가 스텝 수)
         logger.write()
         if config.eval_episode_num > 0:
             print("Start evaluation.")
@@ -320,46 +330,27 @@ def main(config):
                 config.evaldir,
                 logger,
                 is_eval=True,
-                episodes=config.eval_episode_num,
+                episodes=config.eval_episode_num, # 평가 시에만 사용(학습 시에는 step 기준)
             )
             if config.video_pred_log:
                 video_pred = agent._wm.video_pred(next(eval_dataset))
                 logger.video("eval_openl", to_np(video_pred))
         
-        if wake == True : 
-            print("Start training.-Time to wake up")
-            state = tools.simulate_wake(
+        print("Start training.")
+        state = tools.simulate( # pseudo code-go into
             agent,
             train_envs,
             train_eps,
             config.traindir,
             logger,
             limit=config.dataset_size,
-            steps=config.eval_every,
+            steps=config.eval_every, # 학습 시에만 사용 (평가 시에는 ep 기준)
             state=state,
-            wake = wake,
             )
-            items_to_save = {
+        items_to_save = {
             "agent_state_dict": agent.state_dict(),
             "optims_state_dict": tools.recursively_collect_optim_state_dict(agent),
-            }
-        else : # 기존 dreamer와 동일한 방법론
-            print("Start training.-Time to sleep")
-            state = tools.simulate_sleep(
-            agent,
-            train_envs,
-            train_eps,
-            config.traindir,
-            logger,
-            limit=config.dataset_size,
-            steps=config.eval_every,
-            state=state,
-            wake = wake,
-            )
-            items_to_save = {
-            "agent_state_dict": agent.state_dict(),
-            "optims_state_dict": tools.recursively_collect_optim_state_dict(agent),
-            }
+        }
         torch.save(items_to_save, logdir / "latest.pt")
     for env in train_envs + eval_envs:
         try:
