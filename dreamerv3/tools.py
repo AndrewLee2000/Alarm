@@ -170,7 +170,7 @@ def simulate(
         
         # step agents
         obs = {k: np.stack([o[k] for o in obs]) for k in obs[0] if "log_" not in k} # 여러 환경의 관측 값을 하나로 묶어서 빠르게 처리
-        action, agent_state = agent(obs, done, agent_state) # pseudo code-go into
+        action, agent_state = agent(obs, done, agent_state) # pseudo code-go into(dreamer.py의 class Dreamer의 __call__ 함수 호출)
         # action을 numpy array로 변환
         if isinstance(action, dict):
             action = [
@@ -182,7 +182,8 @@ def simulate(
         assert len(action) == len(envs)
         
         # step envs
-        results = [e.step(a) for e, a in zip(envs, action)]
+        # TODO : env.reset()이 어디 있는지 모르겠음 #pseudo code-line 25, -line 44
+        results = [e.step(a) for e, a in zip(envs, action)] # TODO pseudo code-line 26~30, -line 45~48
         results = [r() for r in results]
         obs, reward, done = zip(*[p[:3] for p in results])
         obs = list(obs)
@@ -192,7 +193,8 @@ def simulate(
         length += 1
         step += len(envs)
         length *= 1 - done
-        # add to cache
+        # add to cache # pseudo code-line 31, -line 32, -line 49, -line 50
+        
         for a, result, env in zip(action, results, envs):
             o, r, d, info = result
             o = {k: convert(v) for k, v in o.items()}
@@ -204,6 +206,7 @@ def simulate(
             transition["reward"] = r
             transition["discount"] = info.get("discount", np.array(1 - float(d)))
             add_to_cache(cache, env.id, transition)
+        # TODO : DT로 wake 변수 결정하는 알고리즘 필요 -line 33, -line 51
 
         if done.any():
             indices = [index for index, d in enumerate(done) if d]

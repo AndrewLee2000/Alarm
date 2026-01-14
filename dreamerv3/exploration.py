@@ -43,7 +43,7 @@ class Plan2Explore(nn.Module):
         self._config = config
         self._use_amp = True if config.precision == 16 else False
         self._reward = reward
-        self._behavior = models.ImagBehavior(config, world_model)
+        self._behavior = models.Behavior(config, world_model)
         self.actor = self._behavior.actor
         if config.dyn_discrete:
             feat_size = config.dyn_stoch * config.dyn_discrete + config.dyn_deter

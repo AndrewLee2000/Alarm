@@ -115,10 +115,10 @@ class WorldModel(nn.Module):
         with tools.RequiresGrad(self, wake, active):
             with torch.cuda.amp.autocast(self._use_amp):
                 embed = self.encoder(data)
-                post, prior = self.dynamics.observe( # pseudo code-line 9
+                post, prior = self.dynamics.observe( # pseudo code-line 9, -line 37
                     embed, data["action"], data["is_first"]
                 )
-                if active_length == 0 : #TODO 1: DT와 Dreamer의 state 비교하여  active 변수 처리 방법론  논의 필요 #pseudo code-line 10
+                if active_length == 0 : #HACK : DT와 Dreamer의 state 비교하여  active 변수 처리 방법론  논의 필요 #pseudo code-line 10
                     active = False # pseudo code-line 11
                 kl_free = self._config.kl_free
                 dyn_scale = self._config.dyn_scale
@@ -147,7 +147,7 @@ class WorldModel(nn.Module):
                     for key, value in losses.items()
                 }
                 model_loss = sum(scaled.values()) + kl_loss
-            metrics = self._model_opt(torch.mean(model_loss), self.parameters()) # pseudo code-line 12
+            metrics = self._model_opt(torch.mean(model_loss), self.parameters()) # pseudo code-line 12, -line 38
 
         metrics.update({f"{name}_loss": to_np(loss) for name, loss in losses.items()})
         metrics["kl_free"] = kl_free
@@ -214,9 +214,9 @@ class WorldModel(nn.Module):
         return torch.cat([truth, model, error], 2)
 
 
-class ImagBehavior(nn.Module):
+class Behavior(nn.Module):
     def __init__(self, config, world_model):
-        super(ImagBehavior, self).__init__()
+        super(Behavior, self).__init__()
         self._use_amp = True if config.precision == 16 else False
         self._config = config
         self._world_model = world_model
@@ -285,67 +285,125 @@ class ImagBehavior(nn.Module):
                 "ema_vals", torch.zeros((2,), device=self._config.device)
             )
             self.reward_ema = RewardEMA(device=self._config.device)
-
+    
+    
     def _train(
         self,
         start,
         objective,
+        active,
+        experience=None,
     ):
         self._update_slow_target()
         metrics = {}
+        
+        if active == True : # pseudo code-line 13
+            with tools.RequiresGrad(self.actor):
+                with torch.cuda.amp.autocast(self._use_amp):
+                    # TODO line 14~18 해야 함 
+                    imag_feat, imag_state, imag_action = self._imagine( # pseudo code-line 14
+                        start, self.actor, self._config.imag_horizon
+                    )
+                    reward = objective(imag_feat, imag_state, imag_action) # pseudo code-line 15
+                    actor_ent = self.actor(imag_feat).entropy()
+                    state_ent = self._world_model.dynamics.get_dist(imag_state).entropy()
+                    # this target is not scaled by ema or sym_log.
+                    target, weights, base = self._compute_target( # pseudo code-line 16
+                        imag_feat, imag_state, reward
+                    )
+                    actor_loss, mets = self._compute_actor_loss(
+                        imag_feat,
+                        imag_action,
+                        target,
+                        weights,
+                        base,
+                    )
+                    actor_loss -= self._config.actor["entropy"] * actor_ent[:-1, ..., None]
+                    actor_loss = torch.mean(actor_loss)
+                    metrics.update(mets)
+                    value_input = imag_feat
 
-        with tools.RequiresGrad(self.actor):
-            with torch.cuda.amp.autocast(self._use_amp):
-                imag_feat, imag_state, imag_action = self._imagine(
-                    start, self.actor, self._config.imag_horizon
-                )
-                reward = objective(imag_feat, imag_state, imag_action)
-                actor_ent = self.actor(imag_feat).entropy()
-                state_ent = self._world_model.dynamics.get_dist(imag_state).entropy()
-                # this target is not scaled by ema or sym_log.
-                target, weights, base = self._compute_target(
-                    imag_feat, imag_state, reward
-                )
-                actor_loss, mets = self._compute_actor_loss(
-                    imag_feat,
-                    imag_action,
-                    target,
-                    weights,
-                    base,
-                )
-                actor_loss -= self._config.actor["entropy"] * actor_ent[:-1, ..., None]
-                actor_loss = torch.mean(actor_loss)
-                metrics.update(mets)
-                value_input = imag_feat
+            with tools.RequiresGrad(self.value):
+                with torch.cuda.amp.autocast(self._use_amp):
+                    value = self.value(value_input[:-1].detach())
+                    target = torch.stack(target, dim=1)
+                    # (time, batch, 1), (time, batch, 1) -> (time, batch)
+                    value_loss = -value.log_prob(target.detach())
+                    slow_target = self._slow_value(value_input[:-1].detach())
+                    if self._config.critic["slow_target"]:
+                        value_loss -= value.log_prob(slow_target.mode().detach())
+                    # (time, batch, 1), (time, batch, 1) -> (1,)
+                    value_loss = torch.mean(weights[:-1] * value_loss[:, :, None])
 
-        with tools.RequiresGrad(self.value):
-            with torch.cuda.amp.autocast(self._use_amp):
-                value = self.value(value_input[:-1].detach())
-                target = torch.stack(target, dim=1)
-                # (time, batch, 1), (time, batch, 1) -> (time, batch)
-                value_loss = -value.log_prob(target.detach())
-                slow_target = self._slow_value(value_input[:-1].detach())
-                if self._config.critic["slow_target"]:
-                    value_loss -= value.log_prob(slow_target.mode().detach())
-                # (time, batch, 1), (time, batch, 1) -> (1,)
-                value_loss = torch.mean(weights[:-1] * value_loss[:, :, None])
-
-        metrics.update(tools.tensorstats(value.mode(), "value"))
-        metrics.update(tools.tensorstats(target, "target"))
-        metrics.update(tools.tensorstats(reward, "imag_reward"))
-        if self._config.actor["dist"] in ["onehot"]:
-            metrics.update(
-                tools.tensorstats(
-                    torch.argmax(imag_action, dim=-1).float(), "imag_action"
+            metrics.update(tools.tensorstats(value.mode(), "value"))
+            metrics.update(tools.tensorstats(target, "target"))
+            metrics.update(tools.tensorstats(reward, "imag_reward"))
+            if self._config.actor["dist"] in ["onehot"]:
+                metrics.update(
+                    tools.tensorstats(
+                        torch.argmax(imag_action, dim=-1).float(), "imag_action"
+                    )
                 )
-            )
-        else:
-            metrics.update(tools.tensorstats(imag_action, "imag_action"))
-        metrics["actor_entropy"] = to_np(torch.mean(actor_ent))
-        with tools.RequiresGrad(self):
-            metrics.update(self._actor_opt(actor_loss, self.actor.parameters()))
-            metrics.update(self._value_opt(value_loss, self.value.parameters()))
-        return imag_feat, imag_state, imag_action, weights, metrics
+            else:
+                metrics.update(tools.tensorstats(imag_action, "imag_action"))
+            metrics["actor_entropy"] = to_np(torch.mean(actor_ent))
+            with tools.RequiresGrad(self):
+                metrics.update(self._actor_opt(actor_loss, self.actor.parameters())) # pseudo code-line 17
+                metrics.update(self._value_opt(value_loss, self.value.parameters())) # pseudo code-line 18
+            return imag_feat, imag_state, imag_action, weights, metrics 
+        else : # pseudo code-line 19
+            with tools.RequiresGrad(self.actor):
+                with torch.cuda.amp.autocast(self._use_amp):
+                    imag_feat, imag_state, imag_action = self._imagine( # pseudo code-line 20, -line 39
+                        start, self.actor, self._config.imag_horizon
+                    )
+                    reward = objective(imag_feat, imag_state, imag_action) # pseudo code-line 21, -line 40
+                    actor_ent = self.actor(imag_feat).entropy()
+                    state_ent = self._world_model.dynamics.get_dist(imag_state).entropy()
+                    # this target is not scaled by ema or sym_log.
+                    target, weights, base = self._compute_target( # pseudo code-line 22, -line 41
+                        imag_feat, imag_state, reward
+                    )
+                    actor_loss, mets = self._compute_actor_loss(
+                        imag_feat,
+                        imag_action,
+                        target,
+                        weights,
+                        base,
+                    )
+                    actor_loss -= self._config.actor["entropy"] * actor_ent[:-1, ..., None]
+                    actor_loss = torch.mean(actor_loss)
+                    metrics.update(mets)
+                    value_input = imag_feat
+
+            with tools.RequiresGrad(self.value):
+                with torch.cuda.amp.autocast(self._use_amp):
+                    value = self.value(value_input[:-1].detach())
+                    target = torch.stack(target, dim=1)
+                    # (time, batch, 1), (time, batch, 1) -> (time, batch)
+                    value_loss = -value.log_prob(target.detach())
+                    slow_target = self._slow_value(value_input[:-1].detach())
+                    if self._config.critic["slow_target"]:
+                        value_loss -= value.log_prob(slow_target.mode().detach())
+                    # (time, batch, 1), (time, batch, 1) -> (1,)
+                    value_loss = torch.mean(weights[:-1] * value_loss[:, :, None])
+
+            metrics.update(tools.tensorstats(value.mode(), "value"))
+            metrics.update(tools.tensorstats(target, "target"))
+            metrics.update(tools.tensorstats(reward, "imag_reward"))
+            if self._config.actor["dist"] in ["onehot"]:
+                metrics.update(
+                    tools.tensorstats(
+                        torch.argmax(imag_action, dim=-1).float(), "imag_action"
+                    )
+                )
+            else:
+                metrics.update(tools.tensorstats(imag_action, "imag_action"))
+            metrics["actor_entropy"] = to_np(torch.mean(actor_ent))
+            with tools.RequiresGrad(self):
+                metrics.update(self._actor_opt(actor_loss, self.actor.parameters())) # pseudo code-line 23, -line 42
+                metrics.update(self._value_opt(value_loss, self.value.parameters())) # pseudo code-line 24, -line 43
+            return imag_feat, imag_state, imag_action, weights, metrics 
 
     def _imagine(self, start, policy, horizon):
         dynamics = self._world_model.dynamics
@@ -436,3 +494,5 @@ class ImagBehavior(nn.Module):
                 for s, d in zip(self.value.parameters(), self._slow_value.parameters()):
                     d.data = mix * s.data + (1 - mix) * d.data
             self._updates += 1
+
+

@@ -26,7 +26,7 @@ to_np = lambda x: x.detach().cpu().numpy()
 
 
 class Dreamer(nn.Module):
-    def __init__(self, obs_space, act_space, config, logger, dataset, wake, active):
+    def __init__(self, obs_space, act_space, config, logger, dataset):
         super(Dreamer, self).__init__()
         self._config = config
         self._logger = logger
@@ -44,7 +44,7 @@ class Dreamer(nn.Module):
         """\theta"""
         self._wm = models.WorldModel(obs_space, act_space, self._step, config) # \theta
         """\phi"""
-        self._task_behavior = models.ImagBehavior(config, self._wm) # \phi
+        self._task_behavior = models.Behavior(config, self._wm) # \phi
         if (
             config.compile and os.name != "nt"
         ):  # compilation is not supported on windows
@@ -57,8 +57,8 @@ class Dreamer(nn.Module):
             random=lambda: expl.Random(config, act_space),
             plan2explore=lambda: expl.Plan2Explore(config, self._wm, reward),
         )[config.expl_behavior]().to(self._config.device)
-        self._wake = wake
-        self._active = active
+        self.wake = True
+        self.active = True
         
     def __call__(self, obs, reset, state=None, training=True):
         step = self._step
@@ -68,16 +68,16 @@ class Dreamer(nn.Module):
                 if self._should_pretrain()
                 else self._should_train(step)
             )
-            if self._wake == True : # pseudo code-line 6
-                active_length = 15 #TODO 1: 지금은 임시로 만든 코드임
+            if self.wake == True : # pseudo code-line 6
+                active_length = 15 #HACK : 지금은 임시로 만든 코드임
                 for i in range(steps): # pseudo code-line 7
-                    active_length -= i #TODO 1: 지금은 임시로 만든 코드임
+                    active_length -= i #HACK : 지금은 임시로 만든 코드임
                     self._train(next(self._dataset), active_length) # pseudo code-line 8 (by next(self._dataset)), go into
                     self._update_count += 1
                     self._metrics["update_count"] = self._update_count
-            else : # pseudo code-line ?: 기존 dreamer와 동일한 방법론
-                for i in range(steps): 
-                    self._train(next(self._dataset)) 
+            else : # pseudo code-line 34: 기존 dreamer와 동일한 방법론
+                for i in range(steps): # pseudo code-line 35
+                    self._train(next(self._dataset)) # pseudo code-line 36 (by next(self._dataset)), go into
                     self._update_count += 1
                     self._metrics["update_count"] = self._update_count
                            
@@ -130,16 +130,21 @@ class Dreamer(nn.Module):
 
     def _train(self, data, active_length): 
         metrics = {}
-        post, context, mets, self._active = self._wm._train(data, self._wake, self._active, active_length) # pseudo code-go into
+        # dynamics learning
+        post, context, mets, self.active = self._wm._train(data, self.wake, self.active, active_length) # pseudo code-go into
         metrics.update(mets)
         start = post
         reward = lambda f, s, a: self._wm.heads["reward"](
             self._wm.dynamics.get_feat(s)
         ).mode()
-        metrics.update(self._task_behavior._train(start, reward)[-1])
+        # behavior learning
+        if self.active == True :  #pseudo code-line 13
+            metrics.update(self._task_behavior._train(start, reward, self.active, data)[-1]) # pseudo code-go into
+        else : # pseudo code-line 19
+            metrics.update(self._task_behavior._train(start, reward, self.active)[-1]) # pseudo code-go into
         if self._config.expl_behavior != "greedy":
             mets = self._expl_behavior.train(start, context, data)[-1]
-            metrics.update({"expl_" + key: value for key, value in mets.items()})
+            metrics.update({"expl_" + key: value for key, value in mets.items()}) 
         for name, value in metrics.items():
             if not name in self._metrics.keys():
                 self._metrics[name] = [value]
@@ -262,11 +267,10 @@ def main(config):
     config.num_actions = acts.n if hasattr(acts, "n") else acts.shape[0]
 
     state = None
-    # pseudo code-line 1
-    if not config.offline_traindir:
+    if not config.offline_traindir: 
         prefill = max(0, config.prefill - count_steps(config.traindir))
         print(f"Prefill dataset ({prefill} steps).")
-        if hasattr(acts, "discrete"):
+        if hasattr(acts, "discrete"): 
             random_actor = tools.OneHotDist(
                 torch.zeros(config.num_actions).repeat(config.envs, 1)
             )
@@ -279,7 +283,7 @@ def main(config):
                 1,
             )
 
-        def random_agent(o, d, s):
+        def random_agent(o, d, s): # 처음에 Buffer에 random seed ep 채울 때 사용하는 Agent
             action = random_actor.sample()
             logprob = random_actor.log_prob(action)
             return {"action": action, "logprob": logprob}, None
@@ -297,18 +301,16 @@ def main(config):
         print(f"Logger: ({logger.step} steps).")
 
     
-    print("Simulate agent.")
+    print("Simulate agent.") 
     # dataset \D is used to train the agent.
-    train_dataset = make_dataset(train_eps, config)
+    train_dataset = make_dataset(train_eps, config) # pseudo code-line 1
     eval_dataset = make_dataset(eval_eps, config)
-    agent = Dreamer( # pseudo code-line 2
+    agent = Dreamer( # pseudo code-line 2, -line 3, -line 4
         train_envs[0].observation_space,
         train_envs[0].action_space,
         config,
         logger,
-        train_dataset,
-        wake=True,#pseudo code-line 3
-        active=True,#pseudo code-line 4
+        train_dataset
     ).to(config.device)
     agent.requires_grad_(requires_grad=False)
     if (logdir / "latest.pt").exists():
