@@ -156,7 +156,7 @@ def simulate(
         if done.any(): # 종료 된 환경 찾기
             indices = [index for index, d in enumerate(done) if d] # 종료 된 환경 인덱스 찾기
             # 종료 된 환경 리셋
-            results = [envs[i].reset() for i in indices]
+            results = [envs[i].reset() for i in indices] # pseudo code-line 25, 44
             results = [r() for r in results]
             # 종료 된 환경 리셋 후 ep 시작 초기 값 replay buffer에 추가
             for index, result in zip(indices, results):
@@ -184,8 +184,8 @@ def simulate(
         assert len(action) == len(envs)
         
         # step envs
-        # TODO 2 : env.reset()이 어디 있는지 모르겠음 #pseudo code-line 25, -line 44
-        results = [e.step(a) for e, a in zip(envs, action)] # TODO pseudo code-line 26~30, -line 45~48
+        # TODO 3 : exploration noise 추가 
+        results = [e.step(a) for e, a in zip(envs, action)] # pseudo code-line 26, -line 27, -line 28, -line 29, -line 30, -line 45, -line 46, -line 47, -line 48
         results = [r() for r in results]
         obs, reward, done = zip(*[p[:3] for p in results])
         obs = list(obs)
@@ -195,8 +195,8 @@ def simulate(
         length += 1
         step += len(envs)
         length *= 1 - done
-        # add to cache # pseudo code-line 31, -line 32, -line 49, -line 50
         
+        # add to cache # pseudo code-line 31, -line 32, -line 49, -line 50
         for a, result, env in zip(action, results, envs):
             o, r, d, info = result
             o = {k: convert(v) for k, v in o.items()}
@@ -208,7 +208,7 @@ def simulate(
             transition["reward"] = r
             transition["discount"] = info.get("discount", np.array(1 - float(d)))
             add_to_cache(cache, env.id, transition)
-        # TODO 3 : DT로 wake 변수 결정하는 알고리즘 필요 -line 33, -line 51
+        # TODO 2 : DT로 wake 변수 결정하는 알고리즘 필요 -line 33, -line 51
 
         if done.any():
             indices = [index for index, d in enumerate(done) if d]

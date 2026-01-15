@@ -121,7 +121,7 @@ class WorldModel(nn.Module):
                 post, prior = self.dynamics.observe( # pseudo code-line 9, -line 37
                     embed, data["action"], data["is_first"]
                 )
-                if active_length == 0 : #HACK : DT와 Dreamer의 state 비교하여  active 변수 처리 방법론  논의 필요 #pseudo code-line 10
+                if active_length == 0 : # TODO 1 : DT와 Dreamer의 state 비교하여  active 변수 처리 방법론  논의 필요 pseudo code-line 10
                     active = False # pseudo code-line 11
                 kl_free = self._config.kl_free
                 dyn_scale = self._config.dyn_scale
@@ -309,20 +309,27 @@ class Behavior(nn.Module):
                     "cuda" if "cuda" in str(self._config.device) else "cpu",
                     enabled=self._use_amp,
                 ):
-                    # TODO 1 : line 14~18 해야 함 
-                    imag_feat, imag_state, imag_action = self._imagine( # pseudo code-line 14
-                        start, self.actor, self._config.imag_horizon
+                    # REVIEW 1 : line 14~16 real data로 actor, critic 학습
+                    #-----------------------------------------------------------------------------------------------------#
+                    # imagination 대신 real data 사용 # pseudo code-line 14
+                    swap = lambda x: x.permute([1, 0] + list(range(2, len(x.shape))))
+                    real_state = {k: swap(v) for k, v in start.items()}
+                    real_feat = self._world_model.dynamics.get_feat(real_state)
+                    real_action = torch.as_tensor(
+                            experience["action"], device=self._config.device, dtype=torch.float32
                     )
-                    reward = objective(imag_feat, imag_state, imag_action) # pseudo code-line 15
-                    actor_ent = self.actor(imag_feat).entropy()
-                    state_ent = self._world_model.dynamics.get_dist(imag_state).entropy()
+                    real_action = swap(real_action) 
+                    #-----------------------------------------------------------------------------------------------------#
+                    reward = objective(real_feat, real_state, real_action) # pseudo code-line 15
+                    actor_ent = self.actor(real_feat).entropy()
+                    state_ent = self._world_model.dynamics.get_dist(real_state).entropy()
                     # this target is not scaled by ema or sym_log.
                     target, weights, base = self._compute_target( # pseudo code-line 16
-                        imag_feat, imag_state, reward
+                        real_feat, real_state, reward
                     )
                     actor_loss, mets = self._compute_actor_loss(
-                        imag_feat,
-                        imag_action,
+                        real_feat,
+                        real_action,
                         target,
                         weights,
                         base,
@@ -330,7 +337,7 @@ class Behavior(nn.Module):
                     actor_loss -= self._config.actor["entropy"] * actor_ent[:-1, ..., None]
                     actor_loss = torch.mean(actor_loss)
                     metrics.update(mets)
-                    value_input = imag_feat
+                    value_input = real_feat
 
             with tools.RequiresGrad(self.value):
                 with torch.amp.autocast(
@@ -353,16 +360,33 @@ class Behavior(nn.Module):
             if self._config.actor["dist"] in ["onehot"]:
                 metrics.update(
                     tools.tensorstats(
-                        torch.argmax(imag_action, dim=-1).float(), "imag_action"
+                        torch.argmax(real_action, dim=-1).float(), "imag_action"
                     )
                 )
             else:
-                metrics.update(tools.tensorstats(imag_action, "imag_action"))
+                metrics.update(tools.tensorstats(real_action, "imag_action"))
             metrics["actor_entropy"] = to_np(torch.mean(actor_ent))
             with tools.RequiresGrad(self):
-                metrics.update(self._actor_opt(actor_loss, self.actor.parameters())) # pseudo code-line 17
-                metrics.update(self._value_opt(value_loss, self.value.parameters())) # pseudo code-line 18
-            return imag_feat, imag_state, imag_action, weights, metrics 
+                # REVIEW 2 : line 17, 18 learning rate 변경 부분 
+                #-----------------------------------------------------------------------------------------------------#
+                # active == True 분기에서 optimizer step 직전 # pseudo code-line 17, -line 18
+                
+                # learning rate 변경
+                actor_lr = self._config.actor.get("lr_active", self._config.actor["lr"])
+                value_lr = self._config.critic.get("lr_active", self._config.critic["lr"])
+                for g in self._actor_opt._opt.param_groups:
+                    g["lr"] = actor_lr
+                for g in self._value_opt._opt.param_groups:
+                    g["lr"] = value_lr
+                metrics.update(self._actor_opt(actor_loss, self.actor.parameters()))
+                metrics.update(self._value_opt(value_loss, self.value.parameters()))
+                # learning rate 복원
+                for g in self._actor_opt._opt.param_groups:
+                    g["lr"] = self._config.actor["lr"]
+                for g in self._value_opt._opt.param_groups:
+                    g["lr"] = self._config.critic["lr"]
+                #-----------------------------------------------------------------------------------------------------#
+            return real_feat, real_state, real_action, weights, metrics 
         else : # pseudo code-line 19
             with tools.RequiresGrad(self.actor):
                 with torch.amp.autocast(
