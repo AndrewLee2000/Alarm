@@ -1,0 +1,13 @@
+{"step": 0, "dataset_size": 500.0, "train_return": 32.3321647644043, "train_length": 500.0, "train_episodes": 1.0}
+{"step": 0, "dataset_size": 1000.0, "train_return": 44.042152404785156, "train_length": 500.0, "train_episodes": 2.0}
+{"step": 0, "dataset_size": 1500.0, "train_return": 35.00580596923828, "train_length": 500.0, "train_episodes": 3.0}
+{"step": 0, "dataset_size": 2000.0, "train_return": 43.1837043762207, "train_length": 500.0, "train_episodes": 4.0}
+{"step": 0, "dataset_size": 2500.0, "train_return": 53.95801544189453, "train_length": 500.0, "train_episodes": 5.0}
+{"step": 5000}
+{"step": 5000, "eval_return": 29.867989349365235, "eval_length": 500.0, "eval_episodes": 10.0}
+{"step": 5000}
+{"step": 5000, "eval_return": 29.867989349365235, "eval_length": 500.0, "eval_episodes": 10.0}
+{"step": 5000}
+{"step": 5000, "eval_return": 29.867989349365235, "eval_length": 500.0, "eval_episodes": 10.0}
+{"step": 5000}
+{"step": 5000, "eval_return": 29.867989349365235, "eval_length": 500.0, "eval_episodes": 10.0}

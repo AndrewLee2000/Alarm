@@ -1,6 +1,6 @@
 defaults:
 
-  logdir: null
+  logdir: /home/hail/Desktop/Alarm/logs/debug
   traindir: null
   evaldir: null
   offline_traindir: ''
@@ -16,7 +16,7 @@ defaults:
   device: 'cuda:0'
   compile: True
   precision: 32
-  debug: False
+  debug: True
   video_pred_log: True
 
   # Environment

@@ -113,7 +113,10 @@ class WorldModel(nn.Module):
         data = self.preprocess(data) 
 
         with tools.RequiresGrad(self, wake, active):
-            with torch.cuda.amp.autocast(self._use_amp):
+            with torch.amp.autocast(
+                "cuda" if "cuda" in str(self._config.device) else "cpu",
+                enabled=self._use_amp,
+            ):
                 embed = self.encoder(data)
                 post, prior = self.dynamics.observe( # pseudo code-line 9, -line 37
                     embed, data["action"], data["is_first"]
@@ -156,7 +159,10 @@ class WorldModel(nn.Module):
         metrics["dyn_loss"] = to_np(dyn_loss)
         metrics["rep_loss"] = to_np(rep_loss)
         metrics["kl"] = to_np(torch.mean(kl_value))
-        with torch.cuda.amp.autocast(self._use_amp):
+        with torch.amp.autocast(
+            "cuda" if "cuda" in str(self._config.device) else "cpu",
+            enabled=self._use_amp,
+        ):
             metrics["prior_ent"] = to_np(
                 torch.mean(self.dynamics.get_dist(prior).entropy())
             )
@@ -299,8 +305,11 @@ class Behavior(nn.Module):
         
         if active == True : # pseudo code-line 13
             with tools.RequiresGrad(self.actor):
-                with torch.cuda.amp.autocast(self._use_amp):
-                    # TODO line 14~18 해야 함 
+                with torch.amp.autocast(
+                    "cuda" if "cuda" in str(self._config.device) else "cpu",
+                    enabled=self._use_amp,
+                ):
+                    # TODO 1 : line 14~18 해야 함 
                     imag_feat, imag_state, imag_action = self._imagine( # pseudo code-line 14
                         start, self.actor, self._config.imag_horizon
                     )
@@ -324,7 +333,10 @@ class Behavior(nn.Module):
                     value_input = imag_feat
 
             with tools.RequiresGrad(self.value):
-                with torch.cuda.amp.autocast(self._use_amp):
+                with torch.amp.autocast(
+                    "cuda" if "cuda" in str(self._config.device) else "cpu",
+                    enabled=self._use_amp,
+                ):
                     value = self.value(value_input[:-1].detach())
                     target = torch.stack(target, dim=1)
                     # (time, batch, 1), (time, batch, 1) -> (time, batch)
@@ -353,7 +365,10 @@ class Behavior(nn.Module):
             return imag_feat, imag_state, imag_action, weights, metrics 
         else : # pseudo code-line 19
             with tools.RequiresGrad(self.actor):
-                with torch.cuda.amp.autocast(self._use_amp):
+                with torch.amp.autocast(
+                    "cuda" if "cuda" in str(self._config.device) else "cpu",
+                    enabled=self._use_amp,
+                ):
                     imag_feat, imag_state, imag_action = self._imagine( # pseudo code-line 20, -line 39
                         start, self.actor, self._config.imag_horizon
                     )
@@ -377,7 +392,10 @@ class Behavior(nn.Module):
                     value_input = imag_feat
 
             with tools.RequiresGrad(self.value):
-                with torch.cuda.amp.autocast(self._use_amp):
+                with torch.amp.autocast(
+                    "cuda" if "cuda" in str(self._config.device) else "cpu",
+                    enabled=self._use_amp,
+                ):
                     value = self.value(value_input[:-1].detach())
                     target = torch.stack(target, dim=1)
                     # (time, batch, 1), (time, batch, 1) -> (time, batch)
@@ -494,5 +512,3 @@ class Behavior(nn.Module):
                 for s, d in zip(self.value.parameters(), self._slow_value.parameters()):
                     d.data = mix * s.data + (1 - mix) * d.data
             self._updates += 1
-
-

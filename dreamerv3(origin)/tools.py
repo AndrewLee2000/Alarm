@@ -29,8 +29,10 @@ def symexp(x):
 
 
 class RequiresGrad:
-    def __init__(self, model):
+    def __init__(self, model, wake=None, active=None):
         self._model = model
+        self.wake = wake
+        self.active = active
 
     def __enter__(self):
         self._model.requires_grad_(requires_grad=True)
@@ -182,7 +184,7 @@ def simulate(
         assert len(action) == len(envs)
         
         # step envs
-        # TODO : env.reset()이 어디 있는지 모르겠음 #pseudo code-line 25, -line 44
+        # TODO 2 : env.reset()이 어디 있는지 모르겠음 #pseudo code-line 25, -line 44
         results = [e.step(a) for e, a in zip(envs, action)] # TODO pseudo code-line 26~30, -line 45~48
         results = [r() for r in results]
         obs, reward, done = zip(*[p[:3] for p in results])
@@ -206,7 +208,7 @@ def simulate(
             transition["reward"] = r
             transition["discount"] = info.get("discount", np.array(1 - float(d)))
             add_to_cache(cache, env.id, transition)
-        # TODO : DT로 wake 변수 결정하는 알고리즘 필요 -line 33, -line 51
+        # TODO 3 : DT로 wake 변수 결정하는 알고리즘 필요 -line 33, -line 51
 
         if done.any():
             indices = [index for index, d in enumerate(done) if d]
