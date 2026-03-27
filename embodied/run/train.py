@@ -6,10 +6,11 @@ import embodied
 import numpy as np
 
 
-def train(make_agent, make_replay, make_env, make_stream, make_logger, args):
+def train(make_agent, make_replay, make_detector_replay, make_env, make_stream, make_logger, args):
 
   agent = make_agent()
   replay = make_replay()
+  detector_replay = make_detector_replay()
   logger = make_logger()
 
   logdir = elements.Path(args.logdir)
@@ -59,35 +60,35 @@ def train(make_agent, make_replay, make_env, make_stream, make_logger, args):
   driver.on_step(lambda tran, _: step.increment())
   driver.on_step(lambda tran, _: policy_fps.step())
   driver.on_step(replay.add)
+  driver.on_step(detector_replay.add)
   driver.on_step(logfn)
 
   stream_train = iter(agent.stream(make_stream(replay, 'train')))
+  stream_detector_train = iter(agent.stream(make_stream(detector_replay, 'train')))
   stream_report = iter(agent.stream(make_stream(replay, 'report')))
-
   carry_train = [agent.init_train(args.batch_size)]
   carry_report = agent.init_report(args.batch_size)
 
   def trainfn(tran, worker):
-    if len(replay) < args.batch_size * args.batch_length:
+    if len(replay) < args.batch_size * args.batch_length: # TODO : wake가 True 되면 이거 처럼 걍 return 시켜서 일정 기간 동안은 data만 모으게 할까
       return
-    for _ in range(should_train(step)):
+    for _ in range(should_train(step)): # env 1step당 parameter update 횟수
       with elements.timer.section('stream_next'):
         batch = next(stream_train)
-      # TODO : DT가 판단하는 코드 들어가야 함 - agent.model.wake = detector(batch)
-      #if (agent.model.wake_length == agent.model.config.wake_length) : 
-      #  import ast 
-      #  agent.model.wake = ast.literal_eval(input('wake (True/False): ')) 
-      import ast # HACK
-      agent.model.wake = ast.literal_eval(input('wake (True/False): ')) # HACK
-      if agent.model.wake and agent.model.wake_length > 0:
-        carry_train[0], outs, mets = agent.wake_train(carry_train[0], batch)
-        agent.model.wake_length -= 1
-        jax.debug.print(f"✅ wake_length: {agent.model.wake_length}")
-        if agent.model.wake_length == 0:
-          agent.model.wake = False
-          agent.model.wake_length = agent.model.config.wake_length
+        detector_batch = next(stream_detector_train)
+      if (agent.model.wake_length[worker] == agent.model.config.wake_length) : 
+        import ast # HACK # TODO : DT가 판단하는 코드 들어가야 함 - agent.model.wake[worker] = detector(detector_batch) : 65step에 대해서 16개의 궤적이 있으므로 총 16개의 환경 판단이 이뤄 져야 함.
+        agent.model.wake[worker] = ast.literal_eval(input(f'wake (True/False){worker}: ')) # HACK 
+      if agent.model.wake[worker] and agent.model.wake_length[worker] > 0:
+        carry_train[0], outs, mets = agent.wake_train(carry_train[0], detector_batch)
+        agent.model.wake_length[worker] -= 1
+        jax.debug.print(f"✅ wake_length(wake_train){worker}: {agent.model.wake_length[worker]}") # HACK
+        if agent.model.wake_length[worker] == 0:
+          agent.model.wake[worker] = False
+          agent.model.wake_length[worker] = agent.model.config.wake_length
       else:
         carry_train[0], outs, mets = agent.dream_train(carry_train[0], batch)
+        jax.debug.print(f"✅ wake_length(dream_train){worker}: {agent.model.wake_length[worker]}") # HACK
       train_fps.step(batch_steps)
       if 'replay' in outs:
         replay.update(outs['replay'])
@@ -108,7 +109,7 @@ def train(make_agent, make_replay, make_env, make_stream, make_logger, args):
   driver.reset(agent.init_policy)
   while step < args.steps:
 
-    driver(policy, steps=10)
+    driver(policy, steps=10) # TODO : train_ratio를 조절 해야 하지 않을까..., 환경 변화 판단 코드 들어가야...
 
     if should_report(step) and len(replay):
       agg = elements.Agg()

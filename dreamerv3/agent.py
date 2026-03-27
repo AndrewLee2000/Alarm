@@ -1,4 +1,6 @@
+from difflib import context_diff
 import re
+from tarfile import OutsideDestinationError
 
 import chex
 import elements
@@ -81,8 +83,9 @@ class Agent(embodied.jax.Agent):
     rec = scales.pop('rec')
     scales.update({k: rec for k in dec_space})
     self.scales = scales
-    self.wake = config.wake
-    self.wake_length = config.wake_length
+    n_workers = getattr(config, 'envs', 1)  
+    self.wake = [config.wake] * n_workers
+    self.wake_length = [config.wake_length] * n_workers
 
   @property
   def policy_keys(self):
@@ -136,8 +139,7 @@ class Agent(embodied.jax.Agent):
           enc=enc_entry, dyn=dyn_entry, dec=dec_entry)))
     return carry, act, out
 
-  def wake_train(self, carry, data): # FIXME
-    jax.debug.print("✅ wake_train") 
+  def wake_train(self, carry, data): # FIXME(수)
     carry, obs, prevact, stepid = self._apply_replay_context(carry, data)
     metrics, (carry, entries, outs, mets) = self.opt(
         self.wake_loss, carry, obs, prevact, training=True, has_aux=True) 
@@ -157,7 +159,6 @@ class Agent(embodied.jax.Agent):
     return carry, outs, metrics
 
   def dream_train(self, carry, data): 
-    jax.debug.print("✅ dream_train")
     carry, obs, prevact, stepid = self._apply_replay_context(carry, data)
     metrics, (carry, entries, outs, mets) = self.opt(
         self.dream_loss, carry, obs, prevact, training=True, has_aux=True)
@@ -176,7 +177,7 @@ class Agent(embodied.jax.Agent):
     carry = (*carry, {k: data[k][:, -1] for k in self.act_space})
     return carry, outs, metrics
 
-  def wake_loss(self, carry, obs, prevact, training): # FIXME
+  def wake_loss(self, carry, obs, prevact, training): # FIXME(화)
     enc_carry, dyn_carry, dec_carry = carry
     reset = obs['is_first']
     B, T = reset.shape
@@ -208,54 +209,63 @@ class Agent(embodied.jax.Agent):
     shapes = {k: v.shape for k, v in losses.items()}
     assert all(x == (B, T) for x in shapes.values()), ((B, T), shapes)
 
-    # Imagination
-    K = min(self.config.imag_last or T, T)
-    H = self.config.imag_length
-    starts = self.dyn.starts(dyn_entries, dyn_carry, K)
-    policyfn = lambda feat: sample(self.pol(self.feat2tensor(feat), 1))
-    _, imgfeat, imgprevact = self.dyn.imagine(starts, policyfn, H, training)
-    first = jax.tree.map(
-        lambda x: x[:, -K:].reshape((B * K, 1, *x.shape[2:])), repfeat)
-    imgfeat = concat([sg(first, skip=self.config.ac_grads), sg(imgfeat)], 1)
-    lastact = policyfn(jax.tree.map(lambda x: x[:, -1], imgfeat))
-    lastact = jax.tree.map(lambda x: x[:, None], lastact)
-    imgact = concat([imgprevact, lastact], 1)
-    assert all(x.shape[:2] == (B * K, H + 1) for x in jax.tree.leaves(imgfeat))
-    assert all(x.shape[:2] == (B * K, H + 1) for x in jax.tree.leaves(imgact))
-    inp = self.feat2tensor(imgfeat)
-    los, imgloss_out, mets = imag_loss(
-        imgact,
-        self.rew(inp, 2).pred(),
-        self.con(inp, 2).prob(1),
-        self.pol(inp, 2),
-        self.val(inp, 2),
-        self.slowval(inp, 2),
-        self.retnorm, self.valnorm, self.advnorm,
-        update=training,
-        contdisc=self.config.contdisc,
-        horizon=self.config.horizon,
-        **self.config.imag_loss)
-    losses.update({k: v.mean(1).reshape((B, K)) for k, v in los.items()})
-    metrics.update(mets)
+    # Real Experience
+    K = min(self.config.imag_last or T-1, T-1) # FIXME
+    
+    real_act = prevact
+    real_last = obs['is_last']
+    real_term = obs['is_terminal']
+    real_rew = obs['reward']
+
+    inp = self.feat2tensor(repfeat)
+    
+    los, realloss_out, mets = real_loss(
+      real_act, real_last, real_term, real_rew,
+      self.pol(inp, 2), self.val(inp, 2), self.slowval(inp, 2),
+      self.retnorm, self.valnorm, self.advnorm,
+      update=training,
+      contdisc=self.config.contdisc,
+      horizon=self.config.horizon,
+      **self.config.real_loss)
+    
+    losses.update(los) # FIXME
+    metrics.update(prefix(mets, 'real'))
 
     # Replay
-    if self.config.repval_loss:
-      feat = sg(repfeat, skip=self.config.repval_grad)
-      last, term, rew = [obs[k] for k in ('is_last', 'is_terminal', 'reward')]
-      boot = imgloss_out['ret'][:, 0].reshape(B, K)
-      feat, last, term, rew, boot = jax.tree.map(
-          lambda x: x[:, -K:], (feat, last, term, rew, boot))
-      inp = self.feat2tensor(feat)
-      los, reploss_out, mets = repl_loss(
-          last, term, rew, boot,
-          self.val(inp, 2),
-          self.slowval(inp, 2),
-          self.valnorm,
-          update=training,
-          horizon=self.config.horizon,
-          **self.config.repl_loss)
-      losses.update(los)
-      metrics.update(prefix(mets, 'reploss'))
+    if self.config.repval_loss :
+      if K >=2: # FIXME(수) : 마지막 스텝은 빼고 계산
+        feat = sg(repfeat, skip=self.config.repval_grad)
+        last, term, rew = [obs[k] for k in ('is_last', 'is_terminal', 'reward')]
+        feat, last, term, rew = jax.tree.map(
+            lambda x: x[:, -K:], (feat, last, term, rew))
+        inp = self.feat2tensor(feat)
+        #------------------------------------------------#
+        value = self.val(inp, 2)
+        slowvalue = self.slowval(inp, 2)
+        
+        voffset, vscale = self.valnorm.stats()
+        val = value.pred() * vscale + voffset
+        slowval = slowvalue.pred() * vscale + voffset
+        
+        slowtar = (
+            self.config.repl_real_loss.get('slowtar', False)
+            if hasattr(self.config.repl_real_loss, 'get')
+            else getattr(self.config.repl_real_loss, 'slowtar', False)
+        )
+        tarval = slowval if slowtar else val
+        boot = tarval *(1.0 - f32(term))
+        #------------------------------------------------#
+        los, reploss_out, mets = repl_loss(
+            last, term, rew, boot,
+            self.val(inp, 2), self.slowval(inp, 2), self.valnorm,
+            update=training,
+            horizon=self.config.horizon,
+            **self.config.repl_real_loss)
+        losses.update(los)
+        metrics.update(prefix(mets, 'reploss'))
+      else : 
+        losses['repval'] = jnp.zeros((B, T), f32) 
+
 
     assert set(losses.keys()) == set(self.scales.keys()), (
         sorted(losses.keys()), sorted(self.scales.keys()))
@@ -337,14 +347,13 @@ class Agent(embodied.jax.Agent):
       feat, last, term, rew, boot = jax.tree.map(
           lambda x: x[:, -K:], (feat, last, term, rew, boot))
       inp = self.feat2tensor(feat)
+      
       los, reploss_out, mets = repl_loss(
           last, term, rew, boot,
-          self.val(inp, 2),
-          self.slowval(inp, 2),
-          self.valnorm,
+          self.val(inp, 2), self.slowval(inp, 2), self.valnorm,
           update=training,
           horizon=self.config.horizon,
-          **self.config.repl_loss)
+          **self.config.repl_imag_loss)
       losses.update(los)
       metrics.update(prefix(mets, 'reploss'))
 
@@ -359,7 +368,6 @@ class Agent(embodied.jax.Agent):
     return loss, (carry, entries, outs, metrics)    
   
   def wake_report(self, carry, data): # FIXME
-    jax.debug.print("✅ wake_report")
     if not self.config.report:
       return carry, {}
     carry, obs, prevact, stepid = self._apply_replay_context(carry, data)
@@ -424,7 +432,6 @@ class Agent(embodied.jax.Agent):
     return carry, metrics
 
   def dream_report(self, carry, data): 
-    jax.debug.print("✅ dream_report")
     if not self.config.report:
       return carry, {}
     carry, obs, prevact, stepid = self._apply_replay_context(carry, data)
@@ -572,17 +579,20 @@ def imag_loss(
 ):
   losses = {}
   metrics = {}
-
+  # Value targets (denormalized).
   voffset, vscale = valnorm.stats()
   val = value.pred() * vscale + voffset
   slowval = slowvalue.pred() * vscale + voffset
   tarval = slowval if slowtar else val
+  
+  # Return from predictor 
   disc = 1 if contdisc else 1 - 1 / horizon
   weight = jnp.cumprod(disc * con, 1) / disc
   last = jnp.zeros_like(con)
   term = 1 - con
   ret = lambda_return(last, term, rew, tarval, tarval, disc, lam)
 
+  # Policy loss.
   roffset, rscale = retnorm(ret, update)
   adv = (ret - tarval[:, :-1]) / rscale
   aoffset, ascale = advnorm(adv, update)
@@ -593,12 +603,14 @@ def imag_loss(
       logpi * sg(adv_normed) + actent * sum(ents.values()))
   losses['policy'] = policy_loss
 
+  # Value loss.
   voffset, vscale = valnorm(ret, update)
   tar_normed = (ret - voffset) / vscale
   tar_padded = jnp.concatenate([tar_normed, 0 * tar_normed[:, -1:]], 1)
-  losses['value'] = sg(weight[:, :-1]) * (
+  value_loss = sg(weight[:, :-1]) * (
       value.loss(sg(tar_padded)) +
       slowreg * value.loss(sg(slowvalue.pred())))[:, :-1]
+  losses['value'] = value_loss
 
   ret_normed = (ret - roffset) / rscale
   metrics['adv'] = adv.mean()
@@ -624,6 +636,81 @@ def imag_loss(
   outs['ret'] = ret
   return losses, outs, metrics
 
+def real_loss( # FIXME(월)
+    real_act, real_last, real_term, real_rew, # real trajectory
+    policy, value, slowvalue, # policy head's output, critic head's output, slow critic head's output(by EMA) - 이 output과 실제 궤적을 비교하여 loss 연산
+    retnorm, valnorm, advnorm, # normalization for return, value, advantage
+    update, # True when training, False when reporting
+    contdisc=True,
+    slowtar=True, # True when using slow value, False when using value
+    horizon=333, # Discount horizon
+    lam=1.0, # lambda for discount factor
+    actent=3e-4, # # Actor entropy regulizer
+    slowreg=1.0,  # Critic EMA regulizer
+):
+  losses = {}
+  metrics = {}
+
+  # Value targets (denormalized). # NO Issue
+  voffset, vscale = valnorm.stats()
+  val = value.pred() * vscale + voffset
+  slowval = slowvalue.pred() * vscale + voffset
+  tarval = slowval if slowtar else val
+
+  # Return from real experience # DEBUG
+  real_con = 1 - f32(real_term)
+  real_con_disc = real_con
+  if contdisc:
+    real_con_disc = real_con  * ( 1 - 1 / horizon)
+  disc = 1 if contdisc else (1 - 1 / horizon)
+  term_disc = 1 - real_con_disc
+  boot = tarval *(1.0 - f32(real_term))
+  ret = lambda_return(real_last, term_disc, real_rew, tarval, boot, disc, lam)
+  weight = f32(~real_last)[:, :-1] # last=True인 시점은 에피소드 끝(또는 잘림)이라 그 스텝에서 정책 업데이트를 빼거나 줄이기 위해 Masking
+
+  # Policy loss.
+  roffset, rscale = retnorm(ret, update) # Normalization for return
+  adv = (ret - tarval[:, :-1]) / rscale # Advantage = (Return - Target Value) / Scale
+  aoffset, ascale = advnorm(adv, update) # Normalization for advantage
+  adv_normed = (adv - aoffset) / ascale # Normalized advantage
+  logpi = sum([v.logp(sg(real_act[k]))[:, :-1] for k, v in policy.items()]) # Log-prob of replay actions under current policy (T-1)
+  ents = {k: v.entropy()[:, :-1] for k, v in policy.items()} # Entropy 
+  policy_loss = sg(weight) * -( # Policy gradient loss with entropy bonus; minimize -E[logpi*A + actent*H]
+      logpi * sg(adv_normed) + actent * sum(ents.values()))
+  losses['policy'] = policy_loss
+  
+  # Value loss.
+  voffset, vscale = valnorm(ret, update) # Update/get valnorm stats from ret
+  tar_normed = (ret - voffset) / vscale # Normalized return
+  tar_padded = jnp.concatenate([tar_normed, 0 * tar_normed[:, -1:]], 1) # Append dummy last step so we can slice [:, :-1] safely
+  value_loss = sg(weight) * ( # value loss to normalized return target
+      value.loss(sg(tar_padded)) +
+      slowreg * value.loss(sg(slowvalue.pred())))[:, :-1]
+  losses['value'] = value_loss
+
+  # Metrics.
+  ret_normed = (ret - voffset) / vscale
+  metrics['adv'] = adv.mean()
+  metrics['adv_std'] = adv.std()
+  metrics['adv_mag'] = jnp.abs(adv).mean()
+  metrics['rew'] = real_rew.mean()
+  metrics['ret'] = ret_normed.mean()
+  metrics['val'] = val.mean()
+  metrics['tar'] = ((ret - voffset) / vscale).mean()
+  metrics['weight'] = weight.mean()
+  metrics['slowval'] = slowval.mean()
+  metrics['ret_min'] = ret_normed.min()
+  metrics['ret_max'] = ret_normed.max()
+  metrics['ret_rate'] = (jnp.abs(ret_normed) >= 1.0).mean()
+  for k in real_act:
+    metrics[f'ent/{k}'] = ents[k].mean()
+    if hasattr(policy[k], 'minent'):
+      lo, hi = policy[k].minent, policy[k].maxent
+      metrics[f'rand/{k}'] = (ents[k].mean() - lo) / (hi - lo)
+
+  outs = {}
+  outs['ret'] = ret
+  return losses, outs, metrics
 
 def repl_loss(
     last, term, rew, boot,
@@ -654,9 +741,7 @@ def repl_loss(
   outs = {}
   outs['ret'] = ret
   metrics = {}
-
   return losses, outs, metrics
-
 
 def lambda_return(last, term, rew, val, boot, disc, lam):
   chex.assert_equal_shape((last, term, rew, val, boot))

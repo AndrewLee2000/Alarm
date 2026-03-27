@@ -1,10 +1,10 @@
 defaults:
 
-  logdir: ~/logdir/{timestamp}
+  logdir: ./logdir/dreamer/{timestamp}
   replica: 0
   replicas: 1
   method: name
-  task: dummy_disc
+  task: crafter_reward
   seed: 0
   script: train
   batch_size: 16
@@ -40,6 +40,15 @@ defaults:
 
   replay:
     size: 5e6
+    online: True
+    fracs: {uniform: 1.0, priority: 0.0, recency: 0.0}
+    prio: {exponent: 0.8, maxfrac: 0.5, initial: inf, zero_on_sample: True}
+    priosignal: model
+    recexp: 1.0
+    chunksize: 1024
+
+  detector_replay: # HACK
+    size: 1e4
     online: True
     fracs: {uniform: 1.0, priority: 0.0, recency: 0.0}
     prio: {exponent: 0.8, maxfrac: 0.5, initial: inf, zero_on_sample: True}
@@ -108,7 +117,9 @@ defaults:
     horizon: 333
     contdisc: True
     imag_loss: {slowtar: False, lam: 0.95, actent: 3e-4, slowreg: 1.0}
-    repl_loss: {slowtar: False, lam: 0.95, slowreg: 1.0}
+    real_loss: {slowtar: False, lam: 1.0, actent: 3e-4, slowreg: 1.0}
+    repl_imag_loss: {slowtar: False, lam: 0.95, slowreg: 1.0}
+    repl_real_loss: {slowtar: False, lam: 1.0, slowreg: 1.0}
     slowvalue: {rate: 0.02, every: 1}
     retnorm: {impl: perc, rate: 0.01, limit: 1.0, perclo: 5.0, perchi: 95.0, debias: False}
     valnorm: {impl: none, rate: 0.01, limit: 1e-8}

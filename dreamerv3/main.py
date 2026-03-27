@@ -69,6 +69,7 @@ def main(argv=None):
     embodied.run.train(
         bind(make_agent, config),
         bind(make_replay, config, 'replay'),
+        bind(make_replay, config, 'detector_replay'),
         bind(make_env, config),
         bind(make_stream, config),
         bind(make_logger, config),
@@ -148,6 +149,7 @@ def make_agent(config):
       replicas=config.replicas,
       wake=config.wake,
       wake_length=config.wake_length,
+      envs=config.run.envs,
   ))
 
 

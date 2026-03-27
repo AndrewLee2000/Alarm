@@ -74,10 +74,10 @@ class Driver:
       mask = ~obs['is_last']
       acts = {k: self._mask(v, mask) for k, v in acts.items()}
     self.acts = {**acts, 'reset': obs['is_last'].copy()}
-    trans = {**obs, **acts, **outs, **logs}
+    trans = {**obs, **acts, **outs, **logs} # TODO : trainfn에 들어가야 할 변수 지정해 줘야 함
     for i in range(self.length):
       trn = elements.tree.map(lambda x: x[i], trans)
-      [fn(trn, i, **self.kwargs) for fn in self.callbacks]
+      [fn(trn, i, **self.kwargs) for fn in self.callbacks] # 여기에 train_fn 들어 있음
     step += len(obs['is_first'])
     episode += obs['is_last'].sum()
     return step, episode

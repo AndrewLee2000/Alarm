@@ -69,8 +69,7 @@ Training script:
 
 ```sh
 python dreamerv3/main.py \
-  --logdir ~/logdir/dreamer/{timestamp} \
-  --configs crafter \
+  --configs debug \
   --run.train_ratio 32
 ```
 
