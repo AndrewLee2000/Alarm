@@ -1,0 +1,143 @@
+
+==============NVSMI LOG==============
+
+Timestamp                                              : Fri Mar  6 06:42:13 2026
+Driver Version                                         : 580.126.09
+CUDA Version                                           : 13.0
+
+Attached GPUs                                          : 3
+GPU 00000000:01:00.0
+    Utilization
+        GPU                                            : 94 %
+        Memory                                         : 84 %
+        Encoder                                        : 0 %
+        Decoder                                        : 0 %
+        JPEG                                           : 0 %
+        OFA                                            : 0 %
+    GPU Utilization Samples
+        Duration                                       : 14.00 sec
+        Number of Samples                              : 71
+        Max                                            : 96 %
+        Min                                            : 83 %
+        Avg                                            : 93 %
+    Memory Utilization Samples
+        Duration                                       : 14.00 sec
+        Number of Samples                              : 71
+        Max                                            : 86 %
+        Min                                            : 71 %
+        Avg                                            : 81 %
+    ENC Utilization Samples
+        Duration                                       : 14.00 sec
+        Number of Samples                              : 71
+        Max                                            : 0 %
+        Min                                            : 0 %
+        Avg                                            : 0 %
+    DEC Utilization Samples
+        Duration                                       : 14.00 sec
+        Number of Samples                              : 71
+        Max                                            : 0 %
+        Min                                            : 0 %
+        Avg                                            : 0 %
+    JPG Utilization Samples
+        Duration                                       : 14.00 sec
+        Number of Samples                              : 71
+        Max                                            : 0 %
+        Min                                            : 0 %
+        Avg                                            : 0 %
+    OFA Utilization Samples
+        Duration                                       : 14.00 sec
+        Number of Samples                              : 71
+        Max                                            : 0 %
+        Min                                            : 0 %
+        Avg                                            : 0 %
+
+GPU 00000000:02:00.0
+    Utilization
+        GPU                                            : 0 %
+        Memory                                         : 0 %
+        Encoder                                        : 0 %
+        Decoder                                        : 0 %
+        JPEG                                           : 0 %
+        OFA                                            : 0 %
+    GPU Utilization Samples
+        Duration                                       : 14.00 sec
+        Number of Samples                              : 71
+        Max                                            : 0 %
+        Min                                            : 0 %
+        Avg                                            : 0 %
+    Memory Utilization Samples
+        Duration                                       : 14.00 sec
+        Number of Samples                              : 71
+        Max                                            : 0 %
+        Min                                            : 0 %
+        Avg                                            : 0 %
+    ENC Utilization Samples
+        Duration                                       : 14.00 sec
+        Number of Samples                              : 71
+        Max                                            : 0 %
+        Min                                            : 0 %
+        Avg                                            : 0 %
+    DEC Utilization Samples
+        Duration                                       : 14.00 sec
+        Number of Samples                              : 71
+        Max                                            : 0 %
+        Min                                            : 0 %
+        Avg                                            : 0 %
+    JPG Utilization Samples
+        Duration                                       : 14.00 sec
+        Number of Samples                              : 71
+        Max                                            : 0 %
+        Min                                            : 0 %
+        Avg                                            : 0 %
+    OFA Utilization Samples
+        Duration                                       : 14.00 sec
+        Number of Samples                              : 71
+        Max                                            : 0 %
+        Min                                            : 0 %
+        Avg                                            : 0 %
+
+GPU 00000000:41:00.0
+    Utilization
+        GPU                                            : 100 %
+        Memory                                         : 29 %
+        Encoder                                        : 0 %
+        Decoder                                        : 0 %
+        JPEG                                           : 0 %
+        OFA                                            : 0 %
+    GPU Utilization Samples
+        Duration                                       : 14.00 sec
+        Number of Samples                              : 71
+        Max                                            : 94 %
+        Min                                            : 0 %
+        Avg                                            : 15 %
+    Memory Utilization Samples
+        Duration                                       : 14.00 sec
+        Number of Samples                              : 71
+        Max                                            : 28 %
+        Min                                            : 0 %
+        Avg                                            : 4 %
+    ENC Utilization Samples
+        Duration                                       : 14.00 sec
+        Number of Samples                              : 71
+        Max                                            : 0 %
+        Min                                            : 0 %
+        Avg                                            : 0 %
+    DEC Utilization Samples
+        Duration                                       : 14.00 sec
+        Number of Samples                              : 71
+        Max                                            : 0 %
+        Min                                            : 0 %
+        Avg                                            : 0 %
+    JPG Utilization Samples
+        Duration                                       : 14.00 sec
+        Number of Samples                              : 71
+        Max                                            : 0 %
+        Min                                            : 0 %
+        Avg                                            : 0 %
+    OFA Utilization Samples
+        Duration                                       : 14.00 sec
+        Number of Samples                              : 71
+        Max                                            : 0 %
+        Min                                            : 0 %
+        Avg                                            : 0 %
+
